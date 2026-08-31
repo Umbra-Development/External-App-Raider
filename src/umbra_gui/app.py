@@ -112,6 +112,12 @@ class SettingsApp(ctk.CTk):
         self.load()
         self.update_idletasks()
         self._show_splash()
+        # CustomTkinter withdraws the root once more when its Windows mainloop
+        # applies the title-bar theme. Reveal it from the event loop so that
+        # Windows does not leave the application running with a hidden window.
+        self.after_idle(self._reveal_window)
+
+    def _reveal_window(self) -> None:
         self.deiconify()
         self.lift()
 
