@@ -24,8 +24,9 @@
 
 Download the latest build for Windows or Linux from
 [GitHub Releases](https://github.com/Umbra-Development/External-App-Raider/releases/latest),
-open `Umbra`, configure your application, and use the built-in control to start
-or stop the bot.
+choose the Windows `.exe` or Linux executable, and open `Umbra`. Archive copies
+are also provided. Configure your application, then use the built-in control to
+start or stop the bot.
 
 For setup instructions, configuration help, troubleshooting, and frequently
 asked questions, visit the **[Umbra Wiki](https://github.com/Umbra-Development/External-App-Raider/wiki)**.
