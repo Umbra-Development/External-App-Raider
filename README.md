@@ -16,6 +16,37 @@ Launch the Discord bot with the configured token:
 uv run bot
 ```
 
+## Packaged applications
+
+Build native executables for the current operating system with PyInstaller:
+
+```bash
+uv sync
+uv run python scripts/build_release.py
+```
+
+The build produces two one-file applications in `dist/`:
+
+- `Umbra` opens the Tk/CustomTkinter settings interface.
+- `UmbraBot` runs the Discord bot in a console window.
+
+Both applications use `config/config.jsonc` next to the executables. On first
+launch, the file is created from the bundled safe example, so configure the
+token with `Umbra` before starting `UmbraBot`.
+
+### GitHub releases
+
+The **Build versioned release** workflow is manually triggered from the
+repository's Actions tab. Enter a semantic version such as `1.2.0` and choose
+whether it is a prerelease. The workflow builds separately on Linux and Windows,
+then creates `v1.2.0` with these assets:
+
+- `Umbra-1.2.0-linux-x86_64.tar.gz`
+- `Umbra-1.2.0-windows-x86_64.zip`
+
+The workflow file must be present on the repository's default branch before
+GitHub displays its **Run workflow** button.
+
 Use the scaling menu or press `Ctrl/Cmd` with `+`, `-`, or `0` to zoom the
 interface in, out, or back to 100%.
 

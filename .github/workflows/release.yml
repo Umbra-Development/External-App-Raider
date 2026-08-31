@@ -1,0 +1,138 @@
+name: Build versioned release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 1.2.0 or v1.2.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Publish as a prerelease"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Normalize semantic version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          version="${INPUT_VERSION#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version must look like 1.2.3 or v1.2.3" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: Linux x86_64
+            artifact: linux-x86_64
+          - os: windows-latest
+            label: Windows x86_64
+            artifact: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Verify Tk is available
+        run: uv run python -c "import tkinter; print(tkinter.TkVersion)"
+
+      - name: Build one-file executables
+        run: uv run python scripts/build_release.py
+
+      - name: Package Linux release
+        if: runner.os == 'Linux'
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          mkdir -p release
+          chmod +x dist/Umbra dist/UmbraBot
+          tar -czf "release/Umbra-$VERSION-linux-x86_64.tar.gz" -C dist Umbra UmbraBot
+
+      - name: Package Windows release
+        if: runner.os == 'Windows'
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Compress-Archive `
+            -Path dist/Umbra.exe,dist/UmbraBot.exe `
+            -DestinationPath "release/Umbra-$env:VERSION-windows-x86_64.zip"
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download platform archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        shell: bash
+        run: |
+          options=(
+            "$RELEASE_TAG"
+            release-assets/*
+            --target "$GITHUB_SHA"
+            --title "Umbra $RELEASE_TAG"
+            --generate-notes
+          )
+          if [[ "$PRERELEASE" == "true" ]]; then
+            options+=(--prerelease)
+          fi
+          gh release create "${options[@]}"

@@ -1,18 +1,42 @@
 import json
 import os
 from pathlib import Path
+import shutil
+import sys
 import tempfile
 from typing import Any
 
 import json5
 
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "config.jsonc"
+if getattr(sys, "frozen", False):
+    APPLICATION_ROOT = Path(sys.executable).resolve().parent
+    BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", APPLICATION_ROOT))
+else:
+    APPLICATION_ROOT = Path(__file__).resolve().parents[2]
+    BUNDLE_ROOT = APPLICATION_ROOT
+
+CONFIG_PATH = APPLICATION_ROOT / "config" / "config.jsonc"
+CONFIG_TEMPLATE_PATH = BUNDLE_ROOT / "config" / "config.jsonc.example"
+
+
+def ensure_config(file_path: str | Path = CONFIG_PATH) -> Path:
+    """Create a writable config from the bundled example when needed."""
+    config_path = Path(file_path)
+    if config_path.exists():
+        return config_path
+    if not CONFIG_TEMPLATE_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing configuration template: {CONFIG_TEMPLATE_PATH}"
+        )
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(CONFIG_TEMPLATE_PATH, config_path)
+    return config_path
 
 
 def load_config(file_path: str | Path = CONFIG_PATH) -> dict[str, Any]:
     """Load application configuration from a JSON5 file."""
-    with Path(file_path).open(encoding="utf-8") as config_file:
+    with ensure_config(file_path).open(encoding="utf-8") as config_file:
         return json5.load(config_file)
 
 
