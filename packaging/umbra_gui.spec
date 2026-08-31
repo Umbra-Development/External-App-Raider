@@ -2,13 +2,22 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files
+from PyInstaller.utils.hooks import (
+    collect_all,
+    collect_data_files,
+    collect_submodules,
+)
 
 
 ROOT = Path(SPEC).resolve().parent.parent
 ctk_datas, ctk_binaries, ctk_hiddenimports = collect_all("customtkinter")
 app_datas = collect_data_files("external_app_raider")
 gui_datas = collect_data_files("umbra_gui")
+bot_hiddenimports = [
+    *collect_submodules("discord"),
+    "external_app_raider.cogs.raid",
+    "external_app_raider.cogs.utils",
+]
 datas = [
     *ctk_datas,
     *app_datas,
@@ -17,15 +26,19 @@ datas = [
 ]
 
 analysis = Analysis(
-    [str(ROOT / "packaging" / "umbra_gui.py")],
+    [str(ROOT / "packaging" / "umbra.py")],
     pathex=[str(ROOT / "src")],
     binaries=ctk_binaries,
     datas=datas,
-    hiddenimports=[*ctk_hiddenimports, "PIL._tkinter_finder"],
+    hiddenimports=[
+        *ctk_hiddenimports,
+        *bot_hiddenimports,
+        "PIL._tkinter_finder",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["discord"],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

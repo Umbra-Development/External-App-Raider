@@ -82,8 +82,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          chmod +x dist/Umbra dist/UmbraBot
-          tar -czf "release/Umbra-$VERSION-linux-x86_64.tar.gz" -C dist Umbra UmbraBot
+          chmod +x dist/Umbra
+          tar -czf "release/Umbra-$VERSION-linux-x86_64.tar.gz" -C dist Umbra
 
       - name: Package Windows release
         if: runner.os == 'Windows'
@@ -93,7 +93,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force release | Out-Null
           Compress-Archive `
-            -Path dist/Umbra.exe,dist/UmbraBot.exe `
+            -Path dist/Umbra.exe `
             -DestinationPath "release/Umbra-$env:VERSION-windows-x86_64.zip"
 
       - name: Upload release archive
@@ -128,6 +128,7 @@ jobs:
           options=(
             "$RELEASE_TAG"
             release-assets/*
+            --repo "$GITHUB_REPOSITORY"
             --target "$GITHUB_SHA"
             --title "Umbra $RELEASE_TAG"
             --generate-notes

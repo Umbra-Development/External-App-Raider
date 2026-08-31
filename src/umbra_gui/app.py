@@ -10,6 +10,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageTk
 
+from external_app_raider import PACKAGED_BOT_ARGUMENT
 from external_app_raider.config import CONFIG_PATH, load_config, save_config
 from .discord_preview import DiscordMarkdownView
 
@@ -1009,13 +1010,7 @@ class SettingsApp(ctk.CTk):
 
     def _bot_command(self) -> list[str]:
         if getattr(sys, "frozen", False):
-            executable_name = "UmbraBot.exe" if sys.platform == "win32" else "UmbraBot"
-            bot_executable = Path(sys.executable).with_name(executable_name)
-            if not bot_executable.is_file():
-                raise FileNotFoundError(
-                    f"Could not find {executable_name} beside the Umbra application."
-                )
-            return [str(bot_executable)]
+            return [sys.executable, PACKAGED_BOT_ARGUMENT]
         return [sys.executable, "-m", "external_app_raider"]
 
     def _start_bot(self) -> None:

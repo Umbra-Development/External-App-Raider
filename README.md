@@ -10,7 +10,7 @@ uv sync
 uv run gui
 ```
 
-Launch the Discord bot with the configured token:
+During development, launch the Discord bot without the GUI:
 
 ```bash
 uv run bot
@@ -25,14 +25,14 @@ uv sync
 uv run python scripts/build_release.py
 ```
 
-The build produces two one-file applications in `dist/`:
+The build produces one application in `dist/`:
 
-- `Umbra` opens the Tk/CustomTkinter settings interface.
-- `UmbraBot` runs the Discord bot in a console window.
+- `Umbra` opens the settings interface and runs the bundled bot with its
+  **Start bot** and **Stop bot** control.
 
-Both applications use `config/config.jsonc` next to the executables. On first
-launch, the file is created from the bundled safe example, so configure the
-token with `Umbra` before starting `UmbraBot`.
+The application uses `config/config.jsonc` next to the executable. On first
+launch, the file is created from the bundled safe example. Configure the token
+in Umbra, then start the bot from the same window.
 
 ### GitHub releases
 
