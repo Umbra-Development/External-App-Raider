@@ -1,6 +1,27 @@
 # External-App-Raider
 Discord App that connects to your account, to then raid servers for you via a command.
 
+## Settings GUI
+
+Install the project dependencies and open the cross-platform configuration editor:
+
+```bash
+uv sync
+uv run gui
+```
+
+Launch the Discord bot with the configured token:
+
+```bash
+uv run bot
+```
+
+Use the scaling menu or press `Ctrl/Cmd` with `+`, `-`, or `0` to zoom the
+interface in, out, or back to 100%.
+
+The token is masked by default in the editor. It is still stored as plain text in
+`config/config.jsonc`, so do not commit a real token to source control.
+
 External App Raiders apparently are going somewhat extinct so I decided to put this up here and provide a way for people who even on their phone who would like to raid to raid.
 
 # I can't host it myself

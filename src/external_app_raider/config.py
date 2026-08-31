@@ -1,0 +1,80 @@
+import json
+import os
+from pathlib import Path
+import tempfile
+from typing import Any
+
+import json5
+
+
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "config.jsonc"
+
+
+def load_config(file_path: str | Path = CONFIG_PATH) -> dict[str, Any]:
+    """Load application configuration from a JSON5 file."""
+    with Path(file_path).open(encoding="utf-8") as config_file:
+        return json5.load(config_file)
+
+
+def save_config(
+    data: dict[str, Any], file_path: str | Path = CONFIG_PATH
+) -> None:
+    """Atomically save configuration as JSON, which is also valid JSON5."""
+    config_path = Path(file_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{config_path.name}.",
+        suffix=".tmp",
+        dir=config_path.parent,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as config_file:
+            json.dump(data, config_file, ensure_ascii=False, indent=4)
+            config_file.write("\n")
+        os.replace(temporary_name, config_path)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def reload_config() -> dict[str, Any]:
+    """Reload the module-level configuration values from disk."""
+    loaded = load_config()
+    loaded_basic = loaded["basic_config"]
+    loaded_messages = loaded["messages"]
+
+    # Resolve every required value before changing module state. A malformed
+    # file therefore leaves the last valid configuration active.
+    loaded_token = str(loaded["token"])
+    loaded_prefix = str(loaded_basic["prefix"])
+    loaded_max_uses = int(loaded_basic["max_uses"])
+    loaded_window = int(loaded_basic["wait_seconds"])
+    loaded_block = int(loaded_basic["b_seconds"])
+    loaded_pm = str(loaded_messages["pm"])
+    loaded_pingpm = str(loaded_messages["pingpm"])
+
+    if not loaded_prefix:
+        raise ValueError("basic_config.prefix cannot be empty")
+    if min(loaded_max_uses, loaded_window, loaded_block) < 1:
+        raise ValueError("cooldown settings must be positive integers")
+
+    global config, basic_config, messages
+    global token, prefix, max_uses, wseconds, bseconds, pm, pingpm
+
+    config = loaded
+    basic_config = loaded_basic
+    messages = loaded_messages
+    token = loaded_token
+    prefix = loaded_prefix
+    max_uses = loaded_max_uses
+    wseconds = loaded_window
+    bseconds = loaded_block
+    pm = loaded_pm
+    pingpm = loaded_pingpm
+    return loaded
+
+
+reload_config()

@@ -1,0 +1,1139 @@
+import time
+import tkinter as tk
+from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
+from tkinter import messagebox
+
+import customtkinter as ctk
+from PIL import Image, ImageDraw, ImageTk
+
+from ..config import CONFIG_PATH, load_config, save_config
+from .discord_preview import DiscordMarkdownView
+
+APP_TITLE = "Umbra"
+SPLASH_WORD = "Umbra"
+ORGANIZATION_URL = "https://github.com/Umbra-Development"
+LOGO_PATH = Path(__file__).with_name("assets") / "umbra-development.png"
+THEME_PATH = Path(__file__).with_name("assets") / "umbra-theme.json"
+
+# Establish Umbra before the root window or any child widget is drawn. Retain
+# the stock palette so the appearance selector can still offer standard modes.
+ctk.set_default_color_theme("blue")
+STANDARD_THEME = deepcopy(ctk.ThemeManager.theme)
+ctk.set_default_color_theme(str(THEME_PATH))
+ctk.set_appearance_mode("Dark")
+
+
+def _scale_preference(value: object, default: int = 100) -> int:
+    try:
+        return max(50, min(200, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+class SettingsApp(ctk.CTk):
+    """Desktop editor for the application's JSON5 configuration."""
+
+    def __init__(self) -> None:
+        try:
+            bootstrap_config = load_config()
+        except Exception:
+            bootstrap_config = {}
+        interface = bootstrap_config.get("interface", {})
+        if not isinstance(interface, dict):
+            interface = {}
+        self.scaling_percent = _scale_preference(
+            interface.get("scaling_percent")
+        )
+        self.preview_scaling_percent = _scale_preference(
+            interface.get("preview_scaling_percent")
+        )
+        # Restore scaling before CTk constructs anything, avoiding a resize
+        # and repaint immediately after the first frame is drawn.
+        ctk.set_widget_scaling(self.scaling_percent / 100)
+        super().__init__()
+        # Do not map a partially constructed window before the splash exists.
+        self.withdraw()
+        self.title(f"{APP_TITLE} Settings")
+        self.geometry("860x760")
+        self.minsize(720, 620)
+
+        self.umbra_logo_source = Image.open(LOGO_PATH).convert("RGB")
+        self.umbra_header_image = ctk.CTkImage(
+            light_image=self.umbra_logo_source,
+            dark_image=self.umbra_logo_source,
+            size=(64, 64),
+        )
+        avatar_source = self.umbra_logo_source.convert("RGBA")
+        avatar_mask = Image.new("L", avatar_source.size, 0)
+        ImageDraw.Draw(avatar_mask).ellipse(
+            (0, 0, avatar_source.width - 1, avatar_source.height - 1),
+            fill=255,
+        )
+        avatar_source.putalpha(avatar_mask)
+        self.umbra_avatar_image = ctk.CTkImage(
+            light_image=avatar_source,
+            dark_image=avatar_source,
+            size=(42, 42),
+        )
+
+        self.token_var = ctk.StringVar()
+        self.prefix_var = ctk.StringVar()
+        self.max_uses_var = ctk.StringVar()
+        self.wait_seconds_var = ctk.StringVar()
+        self.block_seconds_var = ctk.StringVar()
+        self.status_var = ctk.StringVar(value=f"Editing {CONFIG_PATH}")
+        self.token_visible = False
+        self.current_config: dict = bootstrap_config
+        self._message_previews: dict[ctk.CTkTextbox, DiscordMarkdownView] = {}
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+        self._build_header()
+        self._build_form()
+        self._build_footer()
+        self._theme_baseline: dict[ctk.CTkBaseClass, dict[str, object]] = {}
+        self._capture_theme_baseline()
+
+        self.bind("<Control-s>", lambda _event: self.save())
+        self.bind("<Command-s>", lambda _event: self.save())
+        self._bind_zoom_shortcuts()
+        self.load()
+        self.update_idletasks()
+        self._show_splash()
+        self.deiconify()
+        self.lift()
+
+    def _build_header(self) -> None:
+        header = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=28, pady=(24, 12))
+        header.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            header,
+            text="",
+            image=self.umbra_header_image,
+        ).grid(row=0, column=0, rowspan=2, padx=(0, 13))
+
+        ctk.CTkLabel(
+            header,
+            text=APP_TITLE,
+            font=ctk.CTkFont(size=28, weight="bold"),
+        ).grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(
+            header,
+            text="Umbra Development • Configuration console",
+            text_color=("gray38", "gray68"),
+        ).grid(row=1, column=1, sticky="w", pady=(3, 0))
+
+        self.appearance_menu = ctk.CTkOptionMenu(
+            header,
+            values=["System", "Light", "Dark", "Umbra"],
+            width=110,
+            command=self._apply_theme,
+        )
+        self.appearance_menu.set("Umbra")
+        self.appearance_menu.grid(
+            row=0, column=2, rowspan=2, sticky="e", padx=(12, 8)
+        )
+
+        self.scaling_menu = ctk.CTkOptionMenu(
+            header,
+            values=["50%", "75%", "90%", "100%", "110%", "125%", "150%", "200%"],
+            width=90,
+            command=self._apply_zoom,
+        )
+        self.scaling_menu.set(f"{self.scaling_percent}%")
+        self.scaling_menu.grid(row=0, column=3, rowspan=2, sticky="e")
+
+    def _capture_theme_baseline(self) -> None:
+        for widget in self._walk_widgets(self):
+            properties = self._theme_properties(widget)
+            if properties:
+                self._theme_baseline[widget] = {
+                    name: widget.cget(name) for name in properties
+                }
+
+    @classmethod
+    def _walk_widgets(cls, widget: object):
+        yield widget
+        for child in widget.winfo_children():
+            yield from cls._walk_widgets(child)
+
+    def _theme_properties(self, widget: object) -> tuple[str, ...]:
+        if getattr(widget, "_preserve_theme_colors", False):
+            return ()
+        if isinstance(getattr(widget, "master", None), ctk.CTkSegmentedButton):
+            return ()
+        if widget is self:
+            return ("fg_color",)
+        if isinstance(widget, ctk.CTkTabview):
+            return (
+                "fg_color",
+                "border_color",
+                "text_color",
+            )
+        if isinstance(widget, ctk.CTkOptionMenu):
+            return (
+                "fg_color",
+                "button_color",
+                "button_hover_color",
+                "text_color",
+            )
+        if isinstance(widget, ctk.CTkSegmentedButton):
+            return (
+                "fg_color",
+                "selected_color",
+                "selected_hover_color",
+                "unselected_color",
+                "unselected_hover_color",
+                "text_color",
+            )
+        if isinstance(widget, ctk.CTkScrollbar):
+            return ("fg_color", "button_color", "button_hover_color")
+        if isinstance(widget, ctk.CTkTextbox):
+            return ("fg_color", "border_color", "text_color")
+        if isinstance(widget, ctk.CTkEntry):
+            return (
+                "fg_color",
+                "border_color",
+                "text_color",
+                "placeholder_text_color",
+            )
+        if isinstance(widget, ctk.CTkButton):
+            return (
+                "fg_color",
+                "hover_color",
+                "border_color",
+                "text_color",
+            )
+        if isinstance(widget, ctk.CTkLabel):
+            return ("fg_color", "text_color")
+        if isinstance(widget, ctk.CTkScrollableFrame):
+            return ("fg_color",)
+        if isinstance(widget, ctk.CTkFrame):
+            return ("fg_color", "border_color")
+        return ()
+
+    def _apply_theme(self, theme_name: str) -> None:
+        self.appearance_menu.set(theme_name)
+        if theme_name != "Umbra":
+            ctk.set_appearance_mode(theme_name)
+            self._apply_standard_widget_colors()
+            return
+
+        ctk.set_appearance_mode("Dark")
+        palette = {
+            "background": "#382837",
+            "surface": "#302330",
+            "surface_alt": "#291925",
+            "input": "#211820",
+            "border": "#697477",
+            "accent": "#ffffe7",
+            "accent_hover": "#d8ddc8",
+            "tab_accent": "#697477",
+            "text": "#ffffe7",
+            "on_accent": "#291925",
+            "muted": "#8e9b9d",
+        }
+        default_label_color = ctk.ThemeManager.theme["CTkLabel"]["text_color"]
+
+        for widget, baseline in self._theme_baseline.items():
+            if not widget.winfo_exists():
+                continue
+            if widget is self:
+                widget.configure(fg_color=palette["background"])
+            elif isinstance(widget, ctk.CTkTabview):
+                widget.configure(
+                    fg_color=palette["surface_alt"],
+                    border_color=palette["border"],
+                    segmented_button_fg_color=palette["surface"],
+                    segmented_button_selected_color=palette["tab_accent"],
+                    segmented_button_selected_hover_color=palette["border"],
+                    segmented_button_unselected_color=palette["surface"],
+                    segmented_button_unselected_hover_color=palette["border"],
+                    text_color=palette["text"],
+                )
+            elif isinstance(widget, ctk.CTkOptionMenu):
+                widget.configure(
+                    fg_color=palette["accent"],
+                    button_color=palette["border"],
+                    button_hover_color=palette["accent_hover"],
+                    text_color=palette["on_accent"],
+                    dropdown_fg_color=palette["surface"],
+                    dropdown_hover_color=palette["border"],
+                    dropdown_text_color=palette["text"],
+                )
+            elif isinstance(widget, ctk.CTkSegmentedButton):
+                widget.configure(
+                    fg_color=palette["surface"],
+                    selected_color=palette["tab_accent"],
+                    selected_hover_color=palette["border"],
+                    unselected_color=palette["surface"],
+                    unselected_hover_color=palette["surface_alt"],
+                    text_color=palette["text"],
+                )
+            elif isinstance(widget, ctk.CTkScrollbar):
+                widget.configure(
+                    fg_color="transparent",
+                    button_color=palette["border"],
+                    button_hover_color=palette["muted"],
+                )
+            elif isinstance(widget, ctk.CTkTextbox):
+                widget.configure(
+                    fg_color=palette["input"],
+                    border_color=palette["border"],
+                    text_color=palette["text"],
+                    scrollbar_button_color=palette["border"],
+                    scrollbar_button_hover_color=palette["muted"],
+                )
+            elif isinstance(widget, ctk.CTkEntry):
+                widget.configure(
+                    fg_color=palette["input"],
+                    border_color=palette["border"],
+                    text_color=palette["text"],
+                    placeholder_text_color=palette["muted"],
+                )
+            elif isinstance(widget, ctk.CTkButton):
+                transparent = baseline.get("fg_color") == "transparent"
+                widget.configure(
+                    fg_color="transparent" if transparent else palette["accent"],
+                    hover_color=palette["border"],
+                    border_color=palette["accent"],
+                    text_color=(
+                        palette["text"] if transparent else palette["on_accent"]
+                    ),
+                )
+            elif isinstance(widget, ctk.CTkLabel):
+                muted = baseline.get("text_color") != default_label_color
+                widget.configure(
+                    fg_color="transparent",
+                    text_color=palette["muted"] if muted else palette["text"],
+                )
+            elif isinstance(widget, ctk.CTkScrollableFrame):
+                widget.configure(fg_color="transparent")
+            elif isinstance(widget, ctk.CTkFrame):
+                transparent = baseline.get("fg_color") == "transparent"
+                widget.configure(
+                    fg_color="transparent" if transparent else palette["surface"],
+                    border_color=palette["border"],
+                )
+
+    def _apply_standard_widget_colors(self) -> None:
+        theme = STANDARD_THEME
+        default_umbra_label = ctk.ThemeManager.theme["CTkLabel"]["text_color"]
+
+        for widget, baseline in self._theme_baseline.items():
+            if not widget.winfo_exists():
+                continue
+            if widget is self:
+                widget.configure(fg_color=theme["CTk"]["fg_color"])
+            elif isinstance(widget, ctk.CTkTabview):
+                tabs = theme["CTkSegmentedButton"]
+                widget.configure(
+                    fg_color=theme["CTkFrame"]["fg_color"],
+                    border_color=theme["CTkFrame"]["border_color"],
+                    segmented_button_fg_color=tabs["fg_color"],
+                    segmented_button_selected_color=tabs["selected_color"],
+                    segmented_button_selected_hover_color=tabs[
+                        "selected_hover_color"
+                    ],
+                    segmented_button_unselected_color=tabs["unselected_color"],
+                    segmented_button_unselected_hover_color=tabs[
+                        "unselected_hover_color"
+                    ],
+                    text_color=tabs["text_color"],
+                )
+            elif isinstance(widget, ctk.CTkOptionMenu):
+                menu = theme["CTkOptionMenu"]
+                dropdown = theme["DropdownMenu"]
+                widget.configure(
+                    fg_color=menu["fg_color"],
+                    button_color=menu["button_color"],
+                    button_hover_color=menu["button_hover_color"],
+                    text_color=menu["text_color"],
+                    dropdown_fg_color=dropdown["fg_color"],
+                    dropdown_hover_color=dropdown["hover_color"],
+                    dropdown_text_color=dropdown["text_color"],
+                )
+            elif isinstance(widget, ctk.CTkSegmentedButton):
+                segmented = theme["CTkSegmentedButton"]
+                widget.configure(
+                    fg_color=segmented["fg_color"],
+                    selected_color=segmented["selected_color"],
+                    selected_hover_color=segmented["selected_hover_color"],
+                    unselected_color=segmented["unselected_color"],
+                    unselected_hover_color=segmented["unselected_hover_color"],
+                    text_color=segmented["text_color"],
+                )
+            elif isinstance(widget, ctk.CTkScrollbar):
+                scrollbar = theme["CTkScrollbar"]
+                widget.configure(
+                    fg_color=scrollbar["fg_color"],
+                    button_color=scrollbar["button_color"],
+                    button_hover_color=scrollbar["button_hover_color"],
+                )
+            elif isinstance(widget, ctk.CTkTextbox):
+                textbox = theme["CTkTextbox"]
+                widget.configure(
+                    fg_color=textbox["fg_color"],
+                    border_color=textbox["border_color"],
+                    text_color=textbox["text_color"],
+                    scrollbar_button_color=textbox["scrollbar_button_color"],
+                    scrollbar_button_hover_color=textbox[
+                        "scrollbar_button_hover_color"
+                    ],
+                )
+            elif isinstance(widget, ctk.CTkEntry):
+                entry = theme["CTkEntry"]
+                widget.configure(
+                    fg_color=entry["fg_color"],
+                    border_color=entry["border_color"],
+                    text_color=entry["text_color"],
+                    placeholder_text_color=entry["placeholder_text_color"],
+                )
+            elif isinstance(widget, ctk.CTkButton):
+                button = theme["CTkButton"]
+                transparent = baseline.get("fg_color") == "transparent"
+                widget.configure(
+                    fg_color="transparent" if transparent else button["fg_color"],
+                    hover_color=button["hover_color"],
+                    border_color=button["border_color"],
+                    text_color=button["text_color"],
+                )
+            elif isinstance(widget, ctk.CTkLabel):
+                muted = baseline.get("text_color") != default_umbra_label
+                widget.configure(
+                    fg_color="transparent",
+                    text_color=(
+                        ("gray38", "gray68")
+                        if muted
+                        else theme["CTkLabel"]["text_color"]
+                    ),
+                )
+            elif isinstance(widget, ctk.CTkScrollableFrame):
+                widget.configure(fg_color="transparent")
+            elif isinstance(widget, ctk.CTkFrame):
+                transparent = baseline.get("fg_color") == "transparent"
+                widget.configure(
+                    fg_color=(
+                        "transparent"
+                        if transparent
+                        else theme["CTkFrame"]["fg_color"]
+                    ),
+                    border_color=theme["CTkFrame"]["border_color"],
+                )
+
+    def _build_form(self) -> None:
+        self.tabs = ctk.CTkTabview(self, corner_radius=14)
+        self.tabs.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 12))
+
+        general_tab = self.tabs.add("General")
+        messages_tab = self.tabs.add("Messages")
+        about_tab = self.tabs.add("About")
+        self.tabs.set("General")
+
+        self._build_general_tab(general_tab)
+        self._build_messages_tab(messages_tab)
+        self._build_about_tab(about_tab)
+
+    def _build_general_tab(self, tab: ctk.CTkFrame) -> None:
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
+        form = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+        form.grid(row=0, column=0, sticky="nsew")
+        form.grid_columnconfigure(0, weight=1)
+
+        account = self._section(
+            form,
+            0,
+            "Connection",
+            "The token is stored locally in config/config.jsonc.",
+        )
+        account.grid_columnconfigure(0, weight=1)
+        self._field_label(account, "Application token", 2)
+        token_row = ctk.CTkFrame(account, fg_color="transparent")
+        token_row.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 18))
+        token_row.grid_columnconfigure(0, weight=1)
+        self.token_entry = ctk.CTkEntry(
+            token_row,
+            textvariable=self.token_var,
+            show="•",
+            placeholder_text="Paste the application token",
+            height=38,
+        )
+        self.token_entry.grid(row=0, column=0, sticky="ew")
+        self.token_button = ctk.CTkButton(
+            token_row,
+            text="Show",
+            width=78,
+            height=38,
+            command=self._toggle_token,
+        )
+        self.token_button.grid(row=0, column=1, padx=(10, 0))
+
+        behavior = self._section(
+            form,
+            1,
+            "Command behavior",
+            "Use whole seconds for both cooldown durations.",
+        )
+        for column in range(4):
+            behavior.grid_columnconfigure(column, weight=1)
+
+        fields = (
+            ("Prefix", self.prefix_var, "!"),
+            ("Maximum uses", self.max_uses_var, "3"),
+            ("Window (seconds)", self.wait_seconds_var, "180"),
+            ("Block (seconds)", self.block_seconds_var, "900"),
+        )
+        for column, (label, variable, placeholder) in enumerate(fields):
+            ctk.CTkLabel(behavior, text=label, font=ctk.CTkFont(weight="bold")).grid(
+                row=2, column=column, sticky="w", padx=(20 if column == 0 else 8, 8)
+            )
+            ctk.CTkEntry(
+                behavior,
+                textvariable=variable,
+                placeholder_text=placeholder,
+                height=38,
+            ).grid(
+                row=3,
+                column=column,
+                sticky="ew",
+                padx=(20 if column == 0 else 8, 20 if column == 3 else 8),
+                pady=(5, 18),
+            )
+
+    def _build_messages_tab(self, tab: ctk.CTkFrame) -> None:
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
+        form = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+        form.grid(row=0, column=0, sticky="nsew")
+        form.grid_columnconfigure(0, weight=1)
+
+        messages = self._section(
+            form,
+            0,
+            "Message templates",
+            "Plain text and Discord markdown are supported.",
+        )
+        messages.grid_columnconfigure(0, weight=1)
+        chooser = ctk.CTkFrame(messages, fg_color="transparent")
+        chooser.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 7))
+        chooser.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            chooser,
+            text="Message being edited",
+            font=ctk.CTkFont(weight="bold"),
+        ).grid(row=0, column=0, sticky="w")
+        self.message_editor_selector = ctk.CTkSegmentedButton(
+            chooser,
+            width=320,
+            height=40,
+            corner_radius=10,
+            border_width=1,
+            values=["Standard", "Notification"],
+            dynamic_resizing=False,
+            fg_color="#211820",
+            selected_color="#697477",
+            selected_hover_color="#819093",
+            unselected_color="#302330",
+            unselected_hover_color="#291925",
+            text_color="#ffffe7",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._select_message_editor,
+        )
+        self.message_editor_selector.grid(row=0, column=1, sticky="e")
+        self.message_editor_selector.set("Standard")
+
+        editor_host = ctk.CTkFrame(messages, fg_color="transparent")
+        editor_host.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 18))
+        editor_host.grid_columnconfigure(0, weight=1)
+        self.pm_text = ctk.CTkTextbox(editor_host, height=300, wrap="word")
+        self.pingpm_text = ctk.CTkTextbox(editor_host, height=300, wrap="word")
+        self.pm_text.grid(row=0, column=0, sticky="ew")
+        self.pingpm_text.grid(row=0, column=0, sticky="ew")
+        self.pingpm_text.grid_remove()
+        self.active_message_textbox = self.pm_text
+
+        self._discord_preview(messages, row=4)
+
+    def _discord_preview(
+        self,
+        parent: ctk.CTkFrame,
+        row: int,
+    ) -> None:
+        preview_controls = ctk.CTkFrame(parent, fg_color="transparent")
+        preview_controls.grid(
+            row=row,
+            column=0,
+            sticky="ew",
+            padx=20,
+            pady=(2, 6),
+        )
+        preview_controls.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            preview_controls,
+            text="DISCORD PREVIEW",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=("gray38", "gray68"),
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            preview_controls,
+            text="Render size",
+            text_color=("gray38", "gray68"),
+        ).grid(row=0, column=1, sticky="e", padx=(12, 7))
+        self.preview_scaling_menu = ctk.CTkOptionMenu(
+            preview_controls,
+            values=["50%", "75%", "90%", "100%", "110%", "125%", "150%", "200%"],
+            width=86,
+            command=self._apply_preview_zoom,
+        )
+        self.preview_scaling_menu.set(f"{self.preview_scaling_percent}%")
+        self.preview_scaling_menu.grid(row=0, column=2, sticky="e")
+
+        preview = ctk.CTkFrame(
+            parent,
+            corner_radius=8,
+            fg_color="#313338",
+            border_width=1,
+            border_color="#3f4147",
+        )
+        preview.grid(
+            row=row + 1,
+            column=0,
+            sticky="nsew",
+            padx=20,
+            pady=(0, 20),
+        )
+        preview.grid_columnconfigure(1, weight=1)
+
+        avatar = ctk.CTkLabel(
+            preview,
+            text="",
+            image=self.umbra_avatar_image,
+            fg_color="transparent",
+        )
+        avatar.grid(row=0, column=0, rowspan=2, sticky="n", padx=(12, 10), pady=12)
+
+        header = ctk.CTkFrame(preview, fg_color="transparent")
+        header.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 1))
+        ctk.CTkLabel(
+            header,
+            text="Umbra",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#f2f3f5",
+        ).pack(side="left")
+        ctk.CTkLabel(
+            header,
+            text="APP",
+            width=30,
+            height=16,
+            corner_radius=3,
+            fg_color="#5865f2",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=9, weight="bold"),
+        ).pack(side="left", padx=(5, 6))
+        ctk.CTkLabel(
+            header,
+            text=f"Today at {datetime.now().strftime('%I:%M %p').lstrip('0')}",
+            text_color="#949ba4",
+            font=ctk.CTkFont(size=10),
+        ).pack(side="left")
+
+        message = DiscordMarkdownView(
+            preview,
+        )
+        message.set_scaling(self.preview_scaling_percent)
+        message.grid(row=1, column=1, sticky="nsew", padx=(0, 12), pady=(0, 12))
+        self.discord_preview = message
+
+        for widget in (preview, avatar, header, *header.winfo_children(), message):
+            widget._preserve_theme_colors = True
+
+        for textbox in (self.pm_text, self.pingpm_text):
+            self._message_previews[textbox] = message
+            textbox._textbox.bind(
+                "<<Modified>>",
+                lambda _event, field=textbox: self._message_text_changed(field),
+                add="+",
+            )
+            textbox._textbox.edit_modified(False)
+
+    def _select_message_editor(self, selection: str) -> None:
+        selected = self.pm_text if selection == "Standard" else self.pingpm_text
+        self.pm_text.grid_remove()
+        self.pingpm_text.grid_remove()
+        selected.grid(row=0, column=0, sticky="ew")
+        self.active_message_textbox = selected
+        self.message_editor_selector.set(selection)
+        self._update_message_preview(selected)
+
+    def _apply_preview_zoom(self, value: str) -> None:
+        try:
+            percent = int(value.removesuffix("%"))
+        except ValueError:
+            return
+        self.preview_scaling_percent = max(50, min(200, percent))
+        self.preview_scaling_menu.set(f"{self.preview_scaling_percent}%")
+        self.discord_preview.set_scaling(self.preview_scaling_percent)
+        self._persist_scale_preferences()
+        self.status_var.set(f"Discord preview scaling: {self.preview_scaling_percent}%")
+
+    def _persist_scale_preferences(self) -> None:
+        try:
+            updated = deepcopy(self.current_config or load_config())
+            updated.setdefault("interface", {}).update(
+                {
+                    "scaling_percent": self.scaling_percent,
+                    "preview_scaling_percent": self.preview_scaling_percent,
+                }
+            )
+            save_config(updated)
+            self.current_config = updated
+        except Exception:
+            # A later explicit Save still gets another chance to persist these
+            # values and will report any filesystem error to the user.
+            return
+
+    def _message_text_changed(self, textbox: ctk.CTkTextbox) -> None:
+        if not textbox._textbox.edit_modified():
+            return
+        textbox._textbox.edit_modified(False)
+        self._update_message_preview(textbox)
+
+    def _update_message_preview(self, textbox: ctk.CTkTextbox) -> None:
+        if textbox is not self.active_message_textbox:
+            return
+        value = textbox.get("1.0", "end-1c")
+        preview = self._message_previews.get(textbox)
+        if preview is None:
+            return
+        preview.set_message(value)
+
+    def _build_about_tab(self, tab: ctk.CTkFrame) -> None:
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
+
+        card = ctk.CTkFrame(tab, corner_radius=14)
+        card.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card,
+            text=APP_TITLE,
+            font=ctk.CTkFont(size=26, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=24, pady=(24, 2))
+        ctk.CTkLabel(
+            card,
+            text="Umbra Development desktop configuration utility.",
+            text_color=("gray38", "gray68"),
+        ).grid(row=1, column=0, sticky="w", padx=24)
+        ctk.CTkLabel(
+            card,
+            text=ORGANIZATION_URL,
+            text_color=("#697477", "#8e9b9d"),
+        ).grid(row=2, column=0, sticky="w", padx=24, pady=(6, 0))
+        ctk.CTkLabel(
+            card,
+            text=f"Configuration\n{CONFIG_PATH}",
+            justify="left",
+            anchor="w",
+        ).grid(row=3, column=0, sticky="ew", padx=24, pady=(28, 0))
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Shortcuts\n"
+                "Ctrl/Cmd + S    Save settings\n"
+                "Ctrl/Cmd + +/-  Adjust interface scale\n"
+                "Ctrl/Cmd + 0    Reset interface scale\n"
+                "Ctrl/Cmd + wheel  Adjust interface scale"
+            ),
+            justify="left",
+            anchor="w",
+        ).grid(row=4, column=0, sticky="ew", padx=24, pady=(28, 24))
+
+    def _show_splash(self) -> None:
+        splash_background = "#382837"
+        self.splash = ctk.CTkFrame(
+            self,
+            corner_radius=0,
+            fg_color=splash_background,
+        )
+        self.splash.place(x=0, y=0, relwidth=1, relheight=1)
+        self.splash.lift()
+        self.splash.grid_columnconfigure(0, weight=1)
+        self.splash.grid_rowconfigure(0, weight=1)
+
+        self.splash_canvas = tk.Canvas(
+            self.splash,
+            background=splash_background,
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.splash_canvas.grid(row=0, column=0, sticky="nsew")
+        self.splash_canvas.bind(
+            "<Button-1>", lambda _event: self._dismiss_splash()
+        )
+
+        self._splash_started = time.perf_counter()
+        self._splash_after_id: str | None = None
+        self._animate_splash()
+
+    def _animate_splash(self) -> None:
+        if not self.splash.winfo_exists():
+            return
+        self._splash_after_id = None
+
+        elapsed = time.perf_counter() - self._splash_started
+        duration = 2.95
+        if elapsed >= duration:
+            self._dismiss_splash()
+            return
+
+        canvas = self.splash_canvas
+        width = max(canvas.winfo_width(), self.winfo_width())
+        height = max(canvas.winfo_height(), self.winfo_height())
+        center_x = width / 2
+        center_y = height / 2 - 12
+        canvas.delete("all")
+
+        background = "#382837"
+        accent = "#ffffe7"
+        muted = "#8e9b9d"
+        wave = "#697477"
+        fade = min(1.0, max(0.0, (elapsed - 2.25) / 0.65))
+        text_visibility = 1.0 - fade
+        logo_visibility = 1.0 - fade
+
+        logo_reveal = min(1.0, max(0.0, (elapsed - 0.08) / 0.62))
+        # Ease-out-back gives the logo a quick overshoot before settling.
+        overshoot = 1.70158
+        shifted = logo_reveal - 1
+        logo_eased = 1 + (overshoot + 1) * shifted**3 + overshoot * shifted**2
+        mark_size = max(1, round(92 + 128 * logo_eased))
+
+        resized_logo = self.umbra_logo_source.resize(
+            (mark_size, mark_size),
+            Image.Resampling.LANCZOS,
+        )
+        if logo_visibility < 1:
+            fade_layer = Image.new("RGB", resized_logo.size, background)
+            resized_logo = Image.blend(
+                fade_layer,
+                resized_logo,
+                logo_visibility,
+            )
+        self._splash_logo_image = ImageTk.PhotoImage(resized_logo)
+        logo_center_y = center_y - 45
+        canvas.create_image(
+            center_x,
+            logo_center_y,
+            image=self._splash_logo_image,
+        )
+
+        ring_reveal = min(1.0, elapsed / 0.9)
+        ring_radius = 118
+        ring_box = (
+            center_x - ring_radius,
+            logo_center_y - ring_radius,
+            center_x + ring_radius,
+            logo_center_y + ring_radius,
+        )
+        canvas.create_arc(
+            ring_box,
+            start=-90 + elapsed * 24,
+            extent=325 * ring_reveal,
+            style="arc",
+            outline=self._mix_color(
+                background,
+                wave,
+                0.72 * logo_visibility,
+            ),
+            width=3,
+        )
+
+        word_y = center_y + 125
+        text_reveal = min(1.0, max(0.0, (elapsed - 0.9) / 0.5))
+        text_eased = 1 - (1 - text_reveal) ** 3
+        word = SPLASH_WORD
+
+        glow_color = self._mix_color(
+            background,
+            wave,
+            0.34 * text_reveal * text_visibility,
+        )
+        word_size = max(1, round(38 + 28 * text_eased))
+        for offset in (4, 2):
+            canvas.create_text(
+                center_x,
+                word_y + offset,
+                text=word,
+                fill=glow_color,
+                font=("TkDefaultFont", word_size + offset, "bold"),
+            )
+        canvas.create_text(
+            center_x,
+            word_y,
+            text=word,
+            fill=self._mix_color(
+                background,
+                accent,
+                text_reveal * text_visibility,
+            ),
+            font=("TkDefaultFont", word_size, "bold"),
+        )
+
+        subtitle_reveal = min(1.0, max(0.0, (elapsed - 1.35) / 0.35))
+        canvas.create_text(
+            center_x,
+            center_y + 209,
+            text="UMBRA DEVELOPMENT",
+            fill=self._mix_color(
+                background,
+                muted,
+                subtitle_reveal * text_visibility,
+            ),
+            font=("TkDefaultFont", 13, "bold"),
+        )
+        line_half_width = 68 * subtitle_reveal
+        canvas.create_line(
+            center_x - line_half_width,
+            center_y + 180,
+            center_x + line_half_width,
+            center_y + 180,
+            fill=self._mix_color(
+                background,
+                accent,
+                subtitle_reveal * text_visibility,
+            ),
+            width=2,
+        )
+
+        self._splash_after_id = self.after(16, self._animate_splash)
+
+    @staticmethod
+    def _mix_color(first: str, second: str, amount: float) -> str:
+        amount = max(0.0, min(1.0, amount))
+        first_rgb = tuple(int(first[index : index + 2], 16) for index in (1, 3, 5))
+        second_rgb = tuple(int(second[index : index + 2], 16) for index in (1, 3, 5))
+        mixed = tuple(
+            round(start + (end - start) * amount)
+            for start, end in zip(first_rgb, second_rgb, strict=True)
+        )
+        return f"#{mixed[0]:02x}{mixed[1]:02x}{mixed[2]:02x}"
+
+    def _dismiss_splash(self) -> None:
+        if getattr(self, "_splash_after_id", None) is not None:
+            self.after_cancel(self._splash_after_id)
+            self._splash_after_id = None
+        if hasattr(self, "splash") and self.splash.winfo_exists():
+            self.splash.destroy()
+
+    @staticmethod
+    def _section(
+        parent: ctk.CTkBaseClass,
+        row: int,
+        title: str,
+        description: str,
+    ) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent, corner_radius=14)
+        frame.grid(row=row, column=0, sticky="ew", padx=8, pady=8)
+        ctk.CTkLabel(
+            frame,
+            text=title,
+            font=ctk.CTkFont(size=18, weight="bold"),
+        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=20, pady=(17, 0))
+        ctk.CTkLabel(
+            frame,
+            text=description,
+            text_color=("gray38", "gray68"),
+        ).grid(row=1, column=0, columnspan=4, sticky="w", padx=20, pady=(2, 14))
+        return frame
+
+    @staticmethod
+    def _field_label(parent: ctk.CTkFrame, text: str, row: int) -> None:
+        ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(weight="bold")).grid(
+            row=row, column=0, sticky="w", padx=20, pady=(0, 5)
+        )
+
+    def _build_footer(self) -> None:
+        footer = ctk.CTkFrame(self, corner_radius=0)
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            footer,
+            textvariable=self.status_var,
+            anchor="w",
+            text_color=("gray35", "gray72"),
+        ).grid(row=0, column=0, sticky="ew", padx=28, pady=18)
+        ctk.CTkButton(
+            footer,
+            text="Reload",
+            width=100,
+            fg_color="transparent",
+            hover_color="#697477",
+            border_color="#ffffe7",
+            border_width=1,
+            text_color="#ffffe7",
+            command=self.load,
+        ).grid(row=0, column=1, padx=(8, 8), pady=14)
+        ctk.CTkButton(
+            footer,
+            text="Save settings",
+            width=130,
+            command=self.save,
+        ).grid(row=0, column=2, padx=(0, 28), pady=14)
+
+    def _toggle_token(self) -> None:
+        self.token_visible = not self.token_visible
+        self.token_entry.configure(show="" if self.token_visible else "•")
+        self.token_button.configure(text="Hide" if self.token_visible else "Show")
+
+    def _bind_zoom_shortcuts(self) -> None:
+        for sequence in (
+            "<Control-plus>",
+            "<Control-equal>",
+            "<Control-KP_Add>",
+            "<Command-plus>",
+            "<Command-equal>",
+        ):
+            self.bind(sequence, lambda _event: self._zoom_by(10))
+        for sequence in (
+            "<Control-minus>",
+            "<Control-KP_Subtract>",
+            "<Command-minus>",
+        ):
+            self.bind(sequence, lambda _event: self._zoom_by(-10))
+        self.bind("<Control-0>", lambda _event: self._apply_zoom("100%"))
+        self.bind("<Command-0>", lambda _event: self._apply_zoom("100%"))
+
+        # Windows and macOS report wheel movement through MouseWheel. Linux/X11
+        # reports the wheel as buttons 4 and 5 instead.
+        self.bind_all("<Control-MouseWheel>", self._handle_zoom_wheel)
+        self.bind_all("<Command-MouseWheel>", self._handle_zoom_wheel)
+        self.bind_all("<Control-Button-4>", self._handle_zoom_wheel)
+        self.bind_all("<Control-Button-5>", self._handle_zoom_wheel)
+
+    def _zoom_by(self, change: int) -> str:
+        new_percent = max(50, min(200, self.scaling_percent + change))
+        if new_percent == self.scaling_percent:
+            return "break"
+        self._apply_zoom(f"{new_percent}%")
+        return "break"
+
+    def _handle_zoom_wheel(self, event: object) -> str:
+        wheel_button = getattr(event, "num", None)
+        wheel_delta = getattr(event, "delta", 0)
+        if wheel_button == 4 or wheel_delta > 0:
+            return self._zoom_by(10)
+        if wheel_button == 5 or wheel_delta < 0:
+            return self._zoom_by(-10)
+        return "break"
+
+    def _apply_zoom(self, value: str) -> str:
+        try:
+            percent = int(value.removesuffix("%"))
+        except ValueError:
+            return "break"
+
+        new_percent = max(50, min(200, percent))
+        if new_percent == self.scaling_percent:
+            return "break"
+
+        self.scaling_percent = new_percent
+        ctk.set_widget_scaling(new_percent / 100)
+        self.scaling_menu.set(f"{new_percent}%")
+        self._persist_scale_preferences()
+        self.status_var.set(f"Interface scaling: {new_percent}%")
+        return "break"
+
+    def load(self) -> None:
+        try:
+            self.current_config = load_config()
+            basic = self.current_config.get("basic_config", {})
+            messages = self.current_config.get("messages", {})
+
+            self.token_var.set(str(self.current_config.get("token", "")))
+            self.prefix_var.set(str(basic.get("prefix", "!")))
+            self.max_uses_var.set(str(basic.get("max_uses", 3)))
+            self.wait_seconds_var.set(str(basic.get("wait_seconds", 180)))
+            self.block_seconds_var.set(str(basic.get("b_seconds", 900)))
+            self._replace_text(self.pm_text, str(messages.get("pm", "")))
+            self._replace_text(
+                self.pingpm_text, str(messages.get("pingpm", ""))
+            )
+            self.status_var.set(f"Loaded {CONFIG_PATH}")
+        except Exception as error:
+            messagebox.showerror("Could not load settings", str(error), parent=self)
+            self.status_var.set("Could not load the configuration")
+
+    def _replace_text(self, textbox: ctk.CTkTextbox, value: str) -> None:
+        textbox.delete("1.0", "end")
+        textbox.insert("1.0", value)
+        self._update_message_preview(textbox)
+
+    def save(self) -> None:
+        try:
+            prefix = self.prefix_var.get().strip()
+            if not prefix:
+                raise ValueError("Prefix cannot be empty.")
+
+            max_uses = self._positive_integer(
+                self.max_uses_var.get(), "Maximum uses"
+            )
+            wait_seconds = self._positive_integer(
+                self.wait_seconds_var.get(), "Window seconds"
+            )
+            block_seconds = self._positive_integer(
+                self.block_seconds_var.get(), "Block seconds"
+            )
+
+            updated = deepcopy(self.current_config)
+            updated["token"] = self.token_var.get().strip()
+            updated.setdefault("basic_config", {}).update(
+                {
+                    "prefix": prefix,
+                    "max_uses": max_uses,
+                    "wait_seconds": wait_seconds,
+                    "b_seconds": block_seconds,
+                }
+            )
+            updated.setdefault("messages", {}).update(
+                {
+                    "pm": self.pm_text.get("1.0", "end-1c"),
+                    "pingpm": self.pingpm_text.get("1.0", "end-1c"),
+                }
+            )
+            updated.setdefault("interface", {}).update(
+                {
+                    "scaling_percent": self.scaling_percent,
+                    "preview_scaling_percent": self.preview_scaling_percent,
+                }
+            )
+            save_config(updated)
+            self.current_config = updated
+            self.status_var.set("Settings saved successfully")
+        except ValueError as error:
+            messagebox.showwarning("Check your settings", str(error), parent=self)
+        except Exception as error:
+            messagebox.showerror("Could not save settings", str(error), parent=self)
+            self.status_var.set("Could not save the configuration")
+
+    @staticmethod
+    def _positive_integer(value: str, label: str) -> int:
+        try:
+            result = int(value)
+        except ValueError as error:
+            raise ValueError(f"{label} must be a whole number.") from error
+        if result < 1:
+            raise ValueError(f"{label} must be at least 1.")
+        return result
+
+
+def main() -> None:
+    SettingsApp().mainloop()
+
+
+if __name__ == "__main__":
+    main()

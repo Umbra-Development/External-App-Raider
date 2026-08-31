@@ -1,0 +1,25 @@
+[project]
+name = "external-app-raider"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Rocco A", email = "xXSG.KingXx@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "customtkinter>=6.0.0",
+    "discord>=2.3.2",
+    "json5>=0.15.0",
+    "pillow>=12.3.0",
+]
+
+[project.scripts]
+external-app-raider = "external_app_raider:main"
+external-app-raider-config = "external_app_raider.gui:main"
+bot = "external_app_raider:main"
+gui = "external_app_raider.gui:main"
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
