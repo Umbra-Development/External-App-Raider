@@ -16,9 +16,9 @@ dependencies = [
 
 [project.scripts]
 external-app-raider = "external_app_raider:main"
-external-app-raider-config = "external_app_raider.gui:main"
+external-app-raider-config = "umbra_gui:main"
 bot = "external_app_raider:main"
-gui = "external_app_raider.gui:main"
+gui = "umbra_gui:main"
 
 [dependency-groups]
 dev = [

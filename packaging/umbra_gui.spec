@@ -8,9 +8,11 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 ROOT = Path(SPEC).resolve().parent.parent
 ctk_datas, ctk_binaries, ctk_hiddenimports = collect_all("customtkinter")
 app_datas = collect_data_files("external_app_raider")
+gui_datas = collect_data_files("umbra_gui")
 datas = [
     *ctk_datas,
     *app_datas,
+    *gui_datas,
     (str(ROOT / "config" / "config.jsonc.example"), "config"),
 ]
 
@@ -36,7 +38,7 @@ exe = EXE(
     analysis.datas,
     [],
     name="Umbra",
-    icon=str(ROOT / "src" / "external_app_raider" / "gui" / "assets" / "umbra-development.png"),
+    icon=str(ROOT / "src" / "umbra_gui" / "assets" / "umbra-development.png"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

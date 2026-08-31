@@ -8,7 +8,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageTk
 
-from ..config import CONFIG_PATH, load_config, save_config
+from external_app_raider.config import CONFIG_PATH, load_config, save_config
 from .discord_preview import DiscordMarkdownView
 
 APP_TITLE = "Umbra"
