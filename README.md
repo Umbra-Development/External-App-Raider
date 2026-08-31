@@ -1,62 +1,52 @@
-# External-App-Raider
-Discord App that connects to your account, to then raid servers for you via a command.
+<div align="center">
+  <img
+    src="./src/umbra_gui/assets/umbra-development.png"
+    alt="Umbra Development logo"
+    width="190"
+  />
 
-## Settings GUI
+  <h1>Umbra</h1>
 
-Install the project dependencies and open the cross-platform configuration editor:
+  <p>A cross-platform desktop interface for configuring and running the Umbra Discord application.</p>
+
+  <p>
+    <a href="https://github.com/Umbra-Development/External-App-Raider/releases/latest"><strong>Download</strong></a>
+    ·
+    <a href="https://github.com/Umbra-Development/External-App-Raider/wiki"><strong>Wiki</strong></a>
+    ·
+    <a href="https://github.com/Umbra-Development/External-App-Raider/issues"><strong>Report an issue</strong></a>
+  </p>
+</div>
+
+---
+
+## Get started
+
+Download the latest build for Windows or Linux from
+[GitHub Releases](https://github.com/Umbra-Development/External-App-Raider/releases/latest),
+open `Umbra`, configure your application, and use the built-in control to start
+or stop the bot.
+
+For setup instructions, configuration help, troubleshooting, and frequently
+asked questions, visit the **[Umbra Wiki](https://github.com/Umbra-Development/External-App-Raider/wiki)**.
+
+<details>
+  <summary><strong>Developer quick start</strong></summary>
 
 ```bash
 uv sync
 uv run gui
 ```
 
-During development, launch the Discord bot without the GUI:
+The standalone bot command is intended for development only:
 
 ```bash
 uv run bot
 ```
 
-## Packaged applications
+</details>
 
-Build native executables for the current operating system with PyInstaller:
+## Disclaimer
 
-```bash
-uv sync
-uv run python scripts/build_release.py
-```
-
-The build produces one application in `dist/`:
-
-- `Umbra` opens the settings interface and runs the bundled bot with its
-  **Start bot** and **Stop bot** control.
-
-The application uses `config/config.jsonc` next to the executable. On first
-launch, the file is created from the bundled safe example. Configure the token
-in Umbra, then start the bot from the same window.
-
-### GitHub releases
-
-The **Build versioned release** workflow is manually triggered from the
-repository's Actions tab. Enter a semantic version such as `1.2.0` and choose
-whether it is a prerelease. The workflow builds separately on Linux and Windows,
-then creates `v1.2.0` with these assets:
-
-- `Umbra-1.2.0-linux-x86_64.tar.gz`
-- `Umbra-1.2.0-windows-x86_64.zip`
-
-The workflow file must be present on the repository's default branch before
-GitHub displays its **Run workflow** button.
-
-Use the scaling menu or press `Ctrl/Cmd` with `+`, `-`, or `0` to zoom the
-interface in, out, or back to 100%.
-
-The token is masked by default in the editor. It is still stored as plain text in
-`config/config.jsonc`, so do not commit a real token to source control.
-
-External App Raiders apparently are going somewhat extinct so I decided to put this up here and provide a way for people who even on their phone who would like to raid to raid.
-
-# I can't host it myself
-That's no worries there is a 24/7 public hosted external app raider hard coded to advertise TKT in this server that you can use to raid anyone you want: https://discord.gg/gKArY5u5MS
-
-# Umbra Development is not responsible for any of the ways in which our tools are used.
-Usage of these tools can put your accounts and bots subject to risk with a potential of being banned from the Discord platform.
+Umbra Development is not responsible for how this software is used. Use it
+responsibly and follow Discord's terms and applicable rules.
