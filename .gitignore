@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 
 config/config.jsonc
+config/bot.log
 build/
 dist/
 release/

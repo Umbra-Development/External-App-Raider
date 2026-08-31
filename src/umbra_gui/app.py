@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import time
 import tkinter as tk
 from copy import deepcopy
@@ -87,6 +89,12 @@ class SettingsApp(ctk.CTk):
         self.token_visible = False
         self.current_config: dict = bootstrap_config
         self._message_previews: dict[ctk.CTkTextbox, DiscordMarkdownView] = {}
+        self.bot_process: subprocess.Popen[bytes] | None = None
+        self._bot_log_file = None
+        self._bot_poll_after_id: str | None = None
+        self._bot_stop_requested = False
+        self._bot_stop_deadline = 0.0
+        self._bot_log_path = CONFIG_PATH.parent / "bot.log"
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
@@ -99,6 +107,7 @@ class SettingsApp(ctk.CTk):
         self.bind("<Control-s>", lambda _event: self.save())
         self.bind("<Command-s>", lambda _event: self.save())
         self._bind_zoom_shortcuts()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.load()
         self.update_idletasks()
         self._show_splash()
@@ -967,6 +976,13 @@ class SettingsApp(ctk.CTk):
             anchor="w",
             text_color=("gray35", "gray72"),
         ).grid(row=0, column=0, sticky="ew", padx=28, pady=18)
+        self.bot_button = ctk.CTkButton(
+            footer,
+            text="Start bot",
+            width=110,
+            command=self._toggle_bot,
+        )
+        self.bot_button.grid(row=0, column=1, padx=(8, 8), pady=14)
         ctk.CTkButton(
             footer,
             text="Reload",
@@ -977,13 +993,138 @@ class SettingsApp(ctk.CTk):
             border_width=1,
             text_color="#ffffe7",
             command=self.load,
-        ).grid(row=0, column=1, padx=(8, 8), pady=14)
+        ).grid(row=0, column=2, padx=(0, 8), pady=14)
         ctk.CTkButton(
             footer,
             text="Save settings",
             width=130,
             command=self.save,
-        ).grid(row=0, column=2, padx=(0, 28), pady=14)
+        ).grid(row=0, column=3, padx=(0, 28), pady=14)
+
+    def _toggle_bot(self) -> None:
+        if self.bot_process is not None and self.bot_process.poll() is None:
+            self._stop_bot()
+        else:
+            self._start_bot()
+
+    def _bot_command(self) -> list[str]:
+        if getattr(sys, "frozen", False):
+            executable_name = "UmbraBot.exe" if sys.platform == "win32" else "UmbraBot"
+            bot_executable = Path(sys.executable).with_name(executable_name)
+            if not bot_executable.is_file():
+                raise FileNotFoundError(
+                    f"Could not find {executable_name} beside the Umbra application."
+                )
+            return [str(bot_executable)]
+        return [sys.executable, "-m", "external_app_raider"]
+
+    def _start_bot(self) -> None:
+        if not self.save():
+            return
+
+        try:
+            command = self._bot_command()
+            self._bot_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._bot_log_file = self._bot_log_path.open(
+                "a", encoding="utf-8", buffering=1
+            )
+            self._bot_log_file.write(
+                "\n--- Umbra bot started "
+                f"{datetime.now().isoformat(timespec='seconds')} ---\n"
+            )
+            options: dict[str, object] = {
+                "cwd": CONFIG_PATH.parent.parent,
+                "stdout": self._bot_log_file,
+                "stderr": subprocess.STDOUT,
+            }
+            if sys.platform == "win32":
+                options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                options["start_new_session"] = True
+            self.bot_process = subprocess.Popen(command, **options)
+        except (OSError, ValueError) as error:
+            self._close_bot_log()
+            messagebox.showerror("Could not start bot", str(error), parent=self)
+            self.status_var.set("Could not start the bot")
+            return
+
+        self._bot_stop_requested = False
+        self.bot_button.configure(text="Stop bot", state="normal")
+        self.status_var.set(f"Bot running (PID {self.bot_process.pid})")
+        self._schedule_bot_poll()
+
+    def _stop_bot(self) -> None:
+        process = self.bot_process
+        if process is None or process.poll() is not None:
+            return
+        self._bot_stop_requested = True
+        self._bot_stop_deadline = time.monotonic() + 3
+        self.bot_button.configure(text="Stopping…", state="disabled")
+        self.status_var.set("Stopping bot…")
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        self._schedule_bot_poll()
+
+    def _schedule_bot_poll(self) -> None:
+        if self._bot_poll_after_id is None:
+            self._bot_poll_after_id = self.after(250, self._poll_bot)
+
+    def _poll_bot(self) -> None:
+        self._bot_poll_after_id = None
+        process = self.bot_process
+        if process is None:
+            return
+
+        exit_code = process.poll()
+        if exit_code is None:
+            if (
+                self._bot_stop_requested
+                and time.monotonic() >= self._bot_stop_deadline
+            ):
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            self._schedule_bot_poll()
+            return
+
+        stopped_by_user = self._bot_stop_requested
+        self.bot_process = None
+        self._bot_stop_requested = False
+        self._close_bot_log()
+        self.bot_button.configure(text="Start bot", state="normal")
+        if stopped_by_user:
+            self.status_var.set("Bot stopped")
+        elif exit_code == 0:
+            self.status_var.set("Bot stopped")
+        else:
+            self.status_var.set(
+                f"Bot exited with code {exit_code}; see {self._bot_log_path}"
+            )
+
+    def _close_bot_log(self) -> None:
+        if self._bot_log_file is not None:
+            self._bot_log_file.close()
+            self._bot_log_file = None
+
+    def _on_close(self) -> None:
+        if self._bot_poll_after_id is not None:
+            self.after_cancel(self._bot_poll_after_id)
+            self._bot_poll_after_id = None
+        process = self.bot_process
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            except OSError:
+                pass
+        self._close_bot_log()
+        self.destroy()
 
     def _toggle_token(self) -> None:
         self.token_visible = not self.token_visible
@@ -1073,7 +1214,7 @@ class SettingsApp(ctk.CTk):
         textbox.insert("1.0", value)
         self._update_message_preview(textbox)
 
-    def save(self) -> None:
+    def save(self) -> bool:
         try:
             prefix = self.prefix_var.get().strip()
             if not prefix:
@@ -1114,11 +1255,14 @@ class SettingsApp(ctk.CTk):
             save_config(updated)
             self.current_config = updated
             self.status_var.set("Settings saved successfully")
+            return True
         except ValueError as error:
             messagebox.showwarning("Check your settings", str(error), parent=self)
+            return False
         except Exception as error:
             messagebox.showerror("Could not save settings", str(error), parent=self)
             self.status_var.set("Could not save the configuration")
+            return False
 
     @staticmethod
     def _positive_integer(value: str, label: str) -> int:

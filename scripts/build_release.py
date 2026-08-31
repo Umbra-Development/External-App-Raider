@@ -12,9 +12,19 @@ SPECS = (
     ROOT / "packaging" / "umbra_gui.spec",
     ROOT / "packaging" / "umbra_bot.spec",
 )
+REQUIRED_INPUTS = (
+    ROOT / "config" / "config.jsonc.example",
+    ROOT / "src" / "umbra_gui" / "assets" / "umbra-development.png",
+    ROOT / "src" / "umbra_gui" / "assets" / "umbra-theme.json",
+)
 
 
 def main() -> None:
+    missing_inputs = [path for path in REQUIRED_INPUTS if not path.is_file()]
+    if missing_inputs:
+        missing = "\n".join(f"- {path}" for path in missing_inputs)
+        raise FileNotFoundError(f"Missing release build inputs:\n{missing}")
+
     for spec in SPECS:
         subprocess.run(
             [
@@ -32,7 +42,9 @@ def main() -> None:
     for name in ("Umbra", "UmbraBot"):
         artifact = ROOT / "dist" / f"{name}{suffix}"
         if not artifact.is_file():
-            raise FileNotFoundError(f"Expected build artifact was not created: {artifact}")
+            raise FileNotFoundError(
+                f"Expected build artifact was not created: {artifact}"
+            )
         print(artifact)
 
 

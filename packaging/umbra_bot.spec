@@ -6,6 +6,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 
 ROOT = Path(SPEC).resolve().parent.parent
+ICON = ROOT / "src" / "umbra_gui" / "assets" / "umbra-development.png"
 hiddenimports = [
     *collect_submodules("discord"),
     "external_app_raider.cogs.raid",
@@ -34,7 +35,7 @@ exe = EXE(
     analysis.datas,
     [],
     name="UmbraBot",
-    icon=str(ROOT / "src" / "external_app_raider" / "gui" / "assets" / "umbra-development.png"),
+    icon=str(ICON),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
